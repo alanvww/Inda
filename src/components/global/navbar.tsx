@@ -16,9 +16,9 @@ export default function Navbar() {
     };
 
     return (
-        <nav className=" m-4 px-4 py-8 border-2 border-stone-900 flex">
+        <nav className=" m-4 px-4 py-4 border-b-2 border-stone-900 flex">
             <motion.div
-                className="md:text-3xl font-bold cursor-pointer h-12 flex items-center"
+                className="bg-stone-900 text-white p-2  md:text-3xl font-bold cursor-pointer h-12 flex items-center"
                 onMouseEnter={() => setHover(true)}
                 onMouseLeave={() => setHover(false)}
             >

@@ -8,7 +8,7 @@ function App() {
   return (
     <div className="flex flex-col min-h-screen">
       <Navbar />
-      <main id='allList' className="flex-grow">
+      <main id='allList' className="flex flex-col flex-grow">
         <ListView />
       </main>
       <Footer />

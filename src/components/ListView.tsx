@@ -74,15 +74,15 @@ export default function ListView() {
     };
 
     return (
-        <div className="mx-4 mb-4 px-4 py-4 border-2 border-stone-900 ">
+        <div className="mx-4 mb-4 px-4  placeholder:flex-grow">
             <button
                 onClick={addList}
-                className="mb-2 bg-stone-900 text-white px-4 py-2"
+                className="mb-4 bg-stone-900 text-white px-4 py-2"
             >
                 Add New List
             </button>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                
+
                 {lists.map((list, listIndex) => (
                     <List
                         key={list.id}

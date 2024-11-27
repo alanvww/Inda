@@ -50,7 +50,7 @@ export default function List({
     };
 
     return (
-        <div className="border-2 border-stone-900 p-4 h-64 overflow-auto">
+        <div className="border-2 border-stone-900 p-4 h-64 flex flex-col overflow-auto">
             <div className="relative flex justify-between mb-2">
                 {/* Editable Title */}
                 {editingTitle ? (
@@ -84,8 +84,8 @@ export default function List({
                 axis="y"
                 values={list.items}
                 onReorder={(newOrder) => reorderItems(listIndex, newOrder)}
-                layoutScroll
-                style={{ overflowY: "scroll" }}
+                
+                className='overflow-y-scroll w-full flex-grow'
             >
                 {list.items.map((item) => (
                     <Reorder.Item key={item.id} value={item} className="p-2 bg-gray-100 my-1">
