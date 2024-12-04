@@ -166,7 +166,7 @@ export default function ListView() {
     const clearAllData = () => {
         if (window.confirm('Are you sure you want to clear all lists? This cannot be undone.')) {
             localStorage.removeItem(STORAGE_KEY);
-            updateListsWithStorage(getDefaultLists());
+            updateListsWithStorage([]);
         }
     };
 
@@ -377,7 +377,7 @@ Return ONLY a JSON object in this exact format:
                     className="bg-red-600 text-white px-4 py-2"
                     title="Clear all lists and reset to default"
                 >
-                    Reset All
+                    Clear All
                 </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
