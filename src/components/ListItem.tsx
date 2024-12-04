@@ -33,7 +33,6 @@ export default function ListItem({
         }
     };
 
-    // New function to handle completing the edit
     const handleEditComplete = () => {
         onUpdate(item.id, inputValue);
         setIsEditing(false);
@@ -43,7 +42,6 @@ export default function ListItem({
         handleEditComplete();
     };
 
-    // New function to handle keyboard events
     const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
         if (e.key === 'Enter') {
             // Prevent the default form submission behavior

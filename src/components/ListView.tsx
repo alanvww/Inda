@@ -162,7 +162,6 @@ export default function ListView() {
         updateListsWithStorage(updatedLists);
     };
 
-    // Added function to clear all data (useful for testing)
     const clearAllData = () => {
         if (window.confirm('Are you sure you want to clear all lists? This cannot be undone.')) {
             localStorage.removeItem(STORAGE_KEY);
