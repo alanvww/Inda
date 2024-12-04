@@ -24,6 +24,8 @@ interface ListProps {
     toggleComplete: (listIndex: number, itemId: string) => void;
 }
 
+const PROXY_URL = import.meta.env.VITE_REPLICATE_PROXY;
+
 export default function List({
     listIndex,
     list,
@@ -36,8 +38,84 @@ export default function List({
 }: ListProps) {
     const [editingTitle, setEditingTitle] = useState(false);
     const [titleValue, setTitleValue] = useState(list.title);
+    const [isGenerating, setIsGenerating] = useState(false);
     const listRef = useRef<HTMLDivElement>(null);
 
+    const preparePrompt = (title: string) => {
+        return `Create a focused todo list with exactly 10 items for "${title}". 
+Return ONLY a JSON array of strings in this exact format, with no additional text:
+["item 1", "item 2", "item 3", ...]
+
+The items should be:
+1. Specific and actionable
+2. Relevant to the list title
+3. Reasonably achievable
+4. Written in a consistent style
+5. Not too long (each item under 50 characters)`;
+    };
+
+    const generateItems = async () => {
+        setIsGenerating(true);
+        try {
+            const data = {
+                modelURL: "https://api.replicate.com/v1/models/meta/meta-llama-3-70b-instruct/predictions",
+                input: {
+                    prompt: preparePrompt(list.title),
+                    max_tokens: 500,
+                    temperature: 0.7,
+                    top_p: 0.9,
+                },
+            };
+
+            const response = await fetch(PROXY_URL, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Accept: 'application/json',
+                },
+                body: JSON.stringify(data),
+            });
+
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+
+            const result = await response.json();
+            console.log('AI response:', result);
+
+            // Parse the AI response to extract the JSON array
+            const responseText = result.output.join('').trim();
+            const itemsMatch = responseText.match(/\[[\s\S]*\]/);
+
+            if (!itemsMatch) {
+                throw new Error('Invalid response format');
+            }
+
+            const items: string[] = JSON.parse(itemsMatch[0]);
+
+            // Create all items first
+            const newItems = items.map(itemValue => ({
+                id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                value: itemValue.trim(),
+                completed: false
+            }));
+
+            // Update the list with all new items at once
+            const updatedList = {
+                ...list,
+                items: [...list.items, ...newItems]
+            };
+
+            // Use reorderItems to update the entire list
+            reorderItems(listIndex, updatedList.items);
+
+        } catch (error) {
+            console.error('Error generating items:', error);
+            alert('Failed to generate items. Please try again.');
+        } finally {
+            setIsGenerating(false);
+        }
+    };
     const handleScreenshot = async () => {
         if (!listRef.current) return;
 
@@ -173,22 +251,39 @@ export default function List({
                 data-reorder-group
                 className="overflow-y-scroll w-full flex-grow"
             >
-                <Reorder.Group
-                    axis="y"
-                    values={sortedItems}
-                    onReorder={(newOrder) => reorderItems(listIndex, newOrder)}
-                    className="w-full"
-                >
-                    {sortedItems.map((item) => (
-                        <ListItem
-                            key={item.id}
-                            item={item}
-                            onUpdate={(itemId, newValue) => updateItem(listIndex, itemId, newValue)}
-                            onDelete={(itemId) => deleteItem(listIndex, itemId)}
-                            onToggleComplete={(itemId) => toggleComplete(listIndex, itemId)}
-                        />
-                    ))}
-                </Reorder.Group>
+                {list.items.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                        <button
+                            onClick={generateItems}
+                            disabled={isGenerating}
+                            className={`text-4xl transition-transform hover:scale-110 ${isGenerating ? 'animate-pulse cursor-wait' : 'hover:animate-bounce'
+                                }`}
+                            title="Generate items using AI"
+                        >
+                            🤖
+                        </button>
+                        <p className="mt-2 text-sm">
+                            {isGenerating ? 'Thinking...' : 'Generate items'}
+                        </p>
+                    </div>
+                ) : (
+                    <Reorder.Group
+                        axis="y"
+                        values={sortedItems}
+                        onReorder={(newOrder) => reorderItems(listIndex, newOrder)}
+                        className="w-full"
+                    >
+                        {sortedItems.map((item) => (
+                            <ListItem
+                                key={item.id}
+                                item={item}
+                                onUpdate={(itemId, newValue) => updateItem(listIndex, itemId, newValue)}
+                                onDelete={(itemId) => deleteItem(listIndex, itemId)}
+                                onToggleComplete={(itemId) => toggleComplete(listIndex, itemId)}
+                            />
+                        ))}
+                    </Reorder.Group>
+                )}
             </div>
         </div>
     );
