@@ -13,13 +13,33 @@ interface ListData {
     items: Item[];
 }
 
-// Storage key for our lists in localStorage
 const STORAGE_KEY = 'inda-lists-data';
+const PROXY_URL = import.meta.env.VITE_REPLICATE_PROXY;
+
+
+function LoadingIndicator() {
+    const [frame, setFrame] = useState(0);
+
+    // Using useEffect to create the animation cycle
+    useEffect(() => {
+        const frames = ['0.0', '>.0', '0.<'];
+        const intervalId = setInterval(() => {
+            setFrame(current => (current + 1) % frames.length);
+        }, 300); // Adjust timing as needed
+
+        // Cleanup on unmount
+        return () => clearInterval(intervalId);
+    }, []);
+
+    const frames = ['0.0', '>.0', '0.<'];
+    return (
+        <div className="font-bold text-5xl">{frames[frame]}</div>
+    );
+}
+
 
 export default function ListView() {
-    // Modified useState to accept a function that initializes from localStorage
     const [lists, setLists] = useState<ListData[]>(() => {
-        // Try to get existing lists from localStorage during initialization
         const savedLists = localStorage.getItem(STORAGE_KEY);
         if (savedLists) {
             try {
@@ -31,15 +51,19 @@ export default function ListView() {
         }
         return getDefaultLists();
     });
+    const [isRegrouping, setIsRegrouping] = useState(false);
 
     // Function to provide default lists when no saved data exists
     function getDefaultLists(): ListData[] {
         return [{
             id: 'list-1',
-            title: 'My First List',
+            title: '0.0 Inda 101',
             items: [
-                { id: 'item-1', value: 'Item 1', completed: false },
-                { id: 'item-2', value: 'Item 2', completed: false },
+                { id: 'item-1', value: 'add item and save using the buttons', completed: false },
+                { id: 'item-2', value: 'Hover to ☑️ check or ❌ delete the item', completed: false },
+                { id: 'item-3', value: 'Double-click to edit list title and item text', completed: false },
+                { id: 'item-5', value: 'completed item looks like this', completed: true },
+
             ],
         }];
     }
@@ -146,15 +170,208 @@ export default function ListView() {
         }
     };
 
+    const preparePromptFromLists = () => {
+        // Create a representation that includes list IDs for reference
+        const listsText = lists.map(list => {
+            const itemsText = list.items
+                .map(item => `{"id": "${item.id}", "value": "${item.value.trim()}", "completed": ${item.completed}}`)
+                .filter(Boolean)
+                .join(", ");
+            return `{"listId": "${list.id}", "items": [${itemsText}]}`;
+        }).join("\n");
+
+        // Modified prompt to request regrouping with existing items
+        return `Analyze these lists and their items for reorganization:
+${listsText}
+
+Rules:
+1. Group items based on themes and semantic similarity
+2. Preserve item IDs and completion status
+3. Create clear, descriptive category names for each group
+4. Return a JSON object showing how to reorganize the items into categories
+5. Every item must be included exactly once
+
+Return ONLY a JSON object in this exact format:
+{
+    "lists": [
+        {
+            "title": "Category Name",
+            "items": [
+                {"id": "original-item-id", "value": "item text", "completed": boolean}
+            ]
+        }
+    ]
+}`;
+    };
+
+    interface ReorganizedItem {
+        id: string;
+        value: string;
+        completed: boolean;
+    }
+
+    interface ReorganizedList {
+        title: string;
+        items: ReorganizedItem[];
+    }
+
+    interface AIReorganizeResponse {
+        lists: ReorganizedList[];
+    }
+
+    const parseAIResponse = (rawResponse: { output: unknown[]; }): ListData[] => {
+        const responseText = rawResponse.output.join('').trim();
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+
+        if (!jsonMatch) {
+            throw new Error('No valid JSON found in response');
+        }
+
+        try {
+            const parsedResponse: AIReorganizeResponse = JSON.parse(jsonMatch[0]);
+
+            if (!parsedResponse.lists || !Array.isArray(parsedResponse.lists)) {
+                throw new Error('Invalid response structure');
+            }
+
+            // Create a map of existing items for reference
+            const existingItemsMap = new Map<string, Item>();
+            lists.forEach(list => {
+                list.items.forEach(item => {
+                    existingItemsMap.set(item.id, item);
+                });
+            });
+
+            // Transform AI response into new lists while preserving existing items
+            return parsedResponse.lists.map(category => ({
+                id: `list-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                title: category.title.trim(),
+                items: category.items
+                    .map(item => {
+                        // Try to find existing item
+                        const existingItem = existingItemsMap.get(item.id);
+                        if (existingItem) {
+                            return {
+                                ...existingItem,
+                                value: item.value.trim() // Use AI's suggested value in case it was cleaned up
+                            };
+                        }
+                        // If item wasn't found (shouldn't happen), create new one
+                        return {
+                            id: item.id,
+                            value: item.value.trim(),
+                            completed: item.completed
+                        };
+                    })
+                    .filter(item => item.value) // Remove any empty items
+            }));
+        } catch (error) {
+            console.error('Error parsing AI response:', error);
+            throw new Error('Failed to parse AI response');
+        }
+    };
+
+    const regroupListsWithAI = async () => {
+        if (lists.length === 0) return;
+        setIsRegrouping(true);
+
+        try {
+            // Validate that we have items to regroup
+            const totalItems = lists.reduce((sum, list) => sum + list.items.length, 0);
+            if (totalItems === 0) {
+                throw new Error('No items to regroup. Please add some items first.');
+            }
+
+            const data = {
+                modelURL: "https://api.replicate.com/v1/models/meta/meta-llama-3-70b-instruct/predictions",
+                input: {
+                    prompt: preparePromptFromLists(),
+                    max_tokens: 1000,
+                    temperature: 0.7,
+                    top_p: 0.9,
+                },
+            };
+
+            const response = await fetch(PROXY_URL, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Accept: 'application/json',
+                },
+                body: JSON.stringify(data),
+            });
+
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+
+            const result = await response.json();
+
+            if (result.error) {
+                throw new Error(result.error);
+            }
+
+            const newLists = parseAIResponse(result);
+
+            console.log('New lists:', newLists);
+
+            // Validate that we haven't lost any items
+            const newTotalItems = newLists.reduce((sum, list) => sum + list.items.length, 0);
+            if (newTotalItems !== totalItems) {
+                throw new Error('Some items were lost during regrouping. Operation cancelled.');
+            }
+
+            if (newLists.length > 0) {
+                updateListsWithStorage(newLists);
+            } else {
+                throw new Error('No valid lists returned from AI');
+            }
+
+        } catch (error: unknown) {
+            console.error('AI regrouping error:', error);
+            if (error instanceof Error) {
+                alert(`Failed to regroup lists: ${error.message}`);
+            } else {
+                alert('Failed to regroup lists: An unknown error occurred');
+            }
+        } finally {
+            setIsRegrouping(false);
+        }
+    };
+
     return (
         <div className="mx-4 mb-4 px-4 flex-grow">
-            <div className="flex justify-between items-center mb-4">
-                <button
-                    onClick={addList}
-                    className="bg-stone-900 text-white px-4 py-2"
+            {isRegrouping && (
+                <div
+                    className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
+                    onMouseDown={(e) => e.preventDefault()}
                 >
-                    Add New List
-                </button>
+                    <div className="bg-white p-6 shadow-lg text-center">
+                        <div className="mb-4">
+                            <LoadingIndicator />
+                        </div>
+                        <h3 className="text-lg font-semibold mb-2">LLM is regrouping the lists and their items</h3>
+                        <p className="text-gray-600">Please wait while items are being organized...</p>
+                    </div>
+                </div>
+            )}
+            <div className="flex justify-between items-center mb-4">
+                <div className="flex gap-4">
+                    <button
+                        onClick={addList}
+                        className="bg-stone-900 text-white px-4 py-2"
+                    >
+                        Add New List
+                    </button>
+                    <button
+                        onClick={regroupListsWithAI}
+                        disabled={isRegrouping || lists.length === 0}
+                        className={`bg-blue-600 text-white px-4 py-2 ${(isRegrouping || lists.length === 0) ? 'opacity-50 cursor-not-allowed' : ''
+                            }`}
+                    >
+                        {isRegrouping ? 'Regrouping...' : '🤖 Regroup'}
+                    </button>
+                </div>
                 <button
                     onClick={clearAllData}
                     className="bg-red-600 text-white px-4 py-2"
