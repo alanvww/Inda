@@ -1,7 +1,9 @@
 import { useState, KeyboardEvent, useRef } from 'react';
 import { Reorder } from 'motion/react';
-import html2canvas from 'html2canvas';
 import ListItem from './ListItem';
+import { useOpenRouterAPI } from '../hooks/useOpenRouterAPI';
+import { useToast } from '../context/ToastContext';
+import { useScreenshot } from '../hooks/useScreenshot';
 
 interface Item {
     id: string;
@@ -24,8 +26,6 @@ interface ListProps {
     toggleComplete: (listIndex: number, itemId: string) => void;
 }
 
-const PROXY_URL = import.meta.env.VITE_REPLICATE_PROXY;
-
 export default function List({
     listIndex,
     list,
@@ -40,6 +40,9 @@ export default function List({
     const [titleValue, setTitleValue] = useState(list.title);
     const [isGenerating, setIsGenerating] = useState(false);
     const listRef = useRef<HTMLDivElement>(null);
+    
+    // Access toast context
+    const { showToast } = useToast();
 
     const preparePrompt = (title: string) => {
         return `Create a focused todo list with exactly 10 items for "${title}". 
@@ -54,48 +57,67 @@ The items should be:
 5. Not too long (each item under 50 characters)`;
     };
 
+    // Initialize the API hook
+    // Define types for possible API responses
+    type ItemResponse = string[] | { items: string[] } | Record<string, unknown>;
+
+    const itemsApi = useOpenRouterAPI<ItemResponse>({
+        prompt: preparePrompt(list.title),
+        systemPrompt: "You are an assistant that creates focused todo lists and always responds in valid JSON format.",
+        responseFormat: 'json_object',
+        maxTokens: 500,
+        temperature: 0.7
+    });
+
     const generateItems = async () => {
         setIsGenerating(true);
         try {
-            const data = {
-                modelURL: "https://api.replicate.com/v1/models/meta/meta-llama-3-70b-instruct/predictions",
-                input: {
-                    prompt: preparePrompt(list.title),
-                    max_tokens: 500,
-                    temperature: 0.7,
-                    top_p: 0.9,
-                },
-            };
-
-            const response = await fetch(PROXY_URL, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: 'application/json',
-                },
-                body: JSON.stringify(data),
-            });
-
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
+            // Execute the API call using our custom hook - will return parsed string[]
+            const result = await itemsApi.execute();
+            
+            if (!result) {
+                throw new Error('Failed to get response from AI service');
             }
 
-            const result = await response.json();
-            console.log('AI response:', result);
-
-            // Parse the AI response to extract the JSON array
-            const responseText = result.output.join('').trim();
-            const itemsMatch = responseText.match(/\[[\s\S]*\]/);
-
-            if (!itemsMatch) {
-                throw new Error('Invalid response format');
+            // The response is already parsed by our improved hook, but we need to normalize the format
+            let items: string[];
+            
+            if (Array.isArray(result)) {
+                // It's already a string array
+                items = result.map(item => typeof item === 'string' ? item : String(item));
+            } else if (typeof result === 'object' && result !== null) {
+                // Check if it has an items property
+                if ('items' in result && Array.isArray(result.items)) {
+                    items = result.items.map(item => typeof item === 'string' ? item : String(item));
+                // Check if it has a text property or similar that might contain items
+                } else if ('text' in result && typeof result.text === 'string') {
+                    // Try to extract JSON array from the text
+                    try {
+                        const extractedItems = JSON.parse(result.text);
+                        if (Array.isArray(extractedItems)) {
+                            items = extractedItems.map(item => typeof item === 'string' ? item : String(item));
+                        } else {
+                            throw new Error('Extracted content is not an array');
+                        }
+                    } catch {
+                        // If parsing fails, just use the text as a single item
+                        items = [String(result.text)];
+                    }
+                } else {
+                    // Fallback: try to stringify the whole object and use that
+                    items = [JSON.stringify(result)];
+                    console.warn('Unexpected response format, using stringified result', result);
+                }
+            } else {
+                throw new Error('Unexpected response format: could not extract items array');
             }
 
-            const items: string[] = JSON.parse(itemsMatch[0]);
+            // Filter out any empty or invalid items
+            items = items.filter(item => typeof item === 'string' && item.trim() !== '');
 
-            // Create all items first
+            // Create all items first (with unique IDs)
             const newItems = items.map(itemValue => ({
-                id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
                 value: itemValue.trim(),
                 completed: false
             }));
@@ -108,24 +130,25 @@ The items should be:
 
             // Use reorderItems to update the entire list
             reorderItems(listIndex, updatedList.items);
+            
+            showToast('Items generated successfully!', 'success');
 
         } catch (error) {
             console.error('Error generating items:', error);
-            alert('Failed to generate items. Please try again.');
+            showToast('Failed to generate items. Please try again.', 'error');
         } finally {
             setIsGenerating(false);
         }
     };
-    const handleScreenshot = async () => {
-        if (!listRef.current) return;
 
+    // Use the screenshot hook
+    const { takeScreenshot } = useScreenshot();
+
+    const handleScreenshot = async () => {
         try {
-            const canvas = await html2canvas(listRef.current, {
-                scale: 2,
-                backgroundColor: '#ffffff',
-                scrollY: -window.scrollY,
-                useCORS: true,
-                onclone: (_document, element) => {
+            const result = await takeScreenshot(listRef, {
+                filename: `${list.title.toLowerCase().replace(/\s+/g, '-')}-${new Date().toISOString().slice(0, 10)}.png`,
+                prepare: (element) => {
                     // Make container auto-height and visible overflow
                     element.style.height = 'auto';
                     element.style.overflow = 'visible';
@@ -146,31 +169,19 @@ The items should be:
                     // Adjust the header layout after hiding buttons
                     const headerContainer = element.querySelector('[data-header-container]');
                     if (headerContainer) {
-
                         (headerContainer as HTMLElement).style.justifyContent = 'flex-start';
                     }
-                },
-                removeContainer: true,
-                logging: false,
+                }
             });
-
-            canvas.toBlob((blob) => {
-                if (!blob) return;
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                const filename = `${list.title.toLowerCase().replace(/\s+/g, '-')}-${new Date().toISOString().slice(0, 10)}.png`;
-
-                link.href = url;
-                link.download = filename;
-                document.body.appendChild(link);
-                link.click();
-
-                document.body.removeChild(link);
-                URL.revokeObjectURL(url);
-            }, 'image/png');
+            
+            if (!result) {
+                throw new Error('Failed to capture screenshot');
+            }
+            
+            showToast('Screenshot saved!', 'success');
         } catch (error) {
             console.error('Error taking screenshot:', error);
-            alert('Failed to take screenshot. Please try again.');
+            showToast('Failed to take screenshot. Please try again.', 'error');
         }
     };
 

@@ -1,0 +1,16 @@
+# Netlify configuration file
+[build]
+  # Directory to publish (the directory where static files will be served from)
+  publish = "dist"
+  # Command to build the site
+  command = "bun run build"
+  # Directory with serverless functions
+  functions = "netlify/functions"
+
+# Redirects and rewrites
+[[redirects]]
+  # Ensure all requests to function paths are proxied to the correct function
+  # Makes /.netlify/functions/openrouter-proxy work properly
+  from = "/.netlify/functions/*"
+  to = "/.netlify/functions/:splat"
+  status = 200

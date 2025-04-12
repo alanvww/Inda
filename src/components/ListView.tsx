@@ -1,22 +1,12 @@
 import { useState, useEffect } from 'react';
 import List from './List';
+import { useOpenRouterAPI } from '../hooks/useOpenRouterAPI';
+import { useToast } from '../context/ToastContext';
+import { useLists, Item, ListData } from '../context/ListContext';
 
-interface Item {
-    id: string;
-    value: string;
-    completed?: boolean;
-}
-
-interface ListData {
-    id: string;
-    title: string;
-    items: Item[];
-}
-
-const STORAGE_KEY = 'inda-lists-data';
-const PROXY_URL = import.meta.env.VITE_REPLICATE_PROXY;
-
-
+/**
+ * Loading indicator component
+ */
 function LoadingIndicator() {
     const [frame, setFrame] = useState(0);
 
@@ -37,160 +27,59 @@ function LoadingIndicator() {
     );
 }
 
-
+/**
+ * Main component for displaying and managing lists
+ */
 export default function ListView() {
-    const [lists, setLists] = useState<ListData[]>(() => {
-        const savedLists = localStorage.getItem(STORAGE_KEY);
-        if (savedLists) {
-            try {
-                return JSON.parse(savedLists);
-            } catch (error) {
-                console.error('Error parsing saved lists:', error);
-                return getDefaultLists();
-            }
-        }
-        return getDefaultLists();
-    });
+    // Use the context for list management
+    const { 
+        lists, 
+        addList, 
+        addItem,
+        updateItem, 
+        updateTitle,
+        reorderItems,
+        deleteItem,
+        toggleComplete,
+        clearAllData,
+        replaceLists
+    } = useLists();
+    
+    // Local state for regrouping operation
     const [isRegrouping, setIsRegrouping] = useState(false);
-
-    // Function to provide default lists when no saved data exists
-    function getDefaultLists(): ListData[] {
-        return [{
-            id: 'list-1',
-            title: '0.0 Inda 101',
-            items: [
-                { id: 'item-1', value: 'add item and save using the buttons', completed: false },
-                { id: 'item-2', value: 'Hover to ☑️ check or ❌ delete the item', completed: false },
-                { id: 'item-3', value: 'Double-click to edit list title and item text', completed: false },
-                { id: 'item-5', value: 'completed item looks like this', completed: true },
-
-            ],
-        }];
-    }
-
-    // Save to localStorage whenever lists change
-    useEffect(() => {
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(lists));
-        } catch (error) {
-            console.error('Error saving lists to localStorage:', error);
-        }
-    }, [lists]);
-
-    // Wrap state updates in a helper function to handle errors
-    const updateListsWithStorage = (newLists: ListData[]) => {
-        try {
-            setLists(newLists);
-        } catch (error) {
-            console.error('Error updating lists:', error);
-            // Optionally show user feedback
-            alert('Failed to update lists. Please try again.');
-        }
-    };
-
-    const addList = () => {
-        const newList: ListData = {
-            id: Date.now().toString(),
-            title: 'New List',
-            items: [],
-        };
-        updateListsWithStorage([...lists, newList]);
-    };
-
-    const addItem = (listIndex: number) => {
-        const newItem: Item = {
-            id: Date.now().toString(),
-            value: '',
-            completed: false,
-        };
-        const updatedLists = lists.map((list, index) =>
-            index === listIndex ? { ...list, items: [...list.items, newItem] } : list
-        );
-        updateListsWithStorage(updatedLists);
-    };
-
-    const updateItem = (listIndex: number, itemId: string, newValue: string) => {
-        const updatedLists = lists.map((list, index) => {
-            if (index === listIndex) {
-                const updatedItems = list.items.map((item) =>
-                    item.id === itemId ? { ...item, value: newValue } : item
-                );
-                return { ...list, items: updatedItems };
-            }
-            return list;
-        });
-        updateListsWithStorage(updatedLists);
-    };
-
-    const updateTitle = (listIndex: number, newTitle: string) => {
-        const updatedLists = lists.map((list, index) =>
-            index === listIndex ? { ...list, title: newTitle } : list
-        );
-        updateListsWithStorage(updatedLists);
-    };
-
-    const reorderItems = (listIndex: number, newOrder: Item[]) => {
-        const updatedLists = lists.map((list, index) =>
-            index === listIndex ? { ...list, items: newOrder } : list
-        );
-        updateListsWithStorage(updatedLists);
-    };
-
-    const deleteItem = (listIndex: number, itemId: string) => {
-        const updatedLists = lists.map((list, index) => {
-            if (index === listIndex) {
-                return {
-                    ...list,
-                    items: list.items.filter(item => item.id !== itemId)
-                };
-            }
-            return list;
-        });
-        updateListsWithStorage(updatedLists);
-    };
-
-    const toggleComplete = (listIndex: number, itemId: string) => {
-        const updatedLists = lists.map((list, index) => {
-            if (index === listIndex) {
-                const updatedItems = list.items.map((item) =>
-                    item.id === itemId ? { ...item, completed: !item.completed } : item
-                );
-                return { ...list, items: updatedItems };
-            }
-            return list;
-        });
-        updateListsWithStorage(updatedLists);
-    };
-
-    const clearAllData = () => {
-        if (window.confirm('Are you sure you want to clear all lists? This cannot be undone.')) {
-            localStorage.removeItem(STORAGE_KEY);
-            updateListsWithStorage([]);
-        }
-    };
+    
+    // Access toast context for notifications
+    const { showToast } = useToast();
 
     const preparePromptFromLists = () => {
         // Create a representation that includes list IDs for reference
         const listsText = lists.map(list => {
             const itemsText = list.items
-                .map(item => `{"id": "${item.id}", "value": "${item.value.trim()}", "completed": ${item.completed}}`)
+                .map(item => {
+                    // Escape any special characters in item values to prevent JSON errors
+                    const escapedValue = item.value.trim().replace(/"/g, '\\"');
+                    return `{"id": "${item.id}", "value": "${escapedValue}", "completed": ${item.completed}}`;
+                })
                 .filter(Boolean)
                 .join(", ");
             return `{"listId": "${list.id}", "items": [${itemsText}]}`;
         }).join("\n");
 
-        // Modified prompt to request regrouping with existing items
+        // Modified prompt with clearer instructions and examples
         return `Analyze these lists and their items for reorganization:
 ${listsText}
 
+IMPORTANT: You must return ONLY a valid JSON object with no additional text, comments, or explanations.
+
 Rules:
 1. Group items based on themes and semantic similarity
-2. Preserve item IDs and completion status
+2. Preserve item IDs and completion status exactly as provided
 3. Create clear, descriptive category names for each group
 4. Return a JSON object showing how to reorganize the items into categories
 5. Every item must be included exactly once
+6. Ensure the JSON is properly formatted with no syntax errors
 
-Return ONLY a JSON object in this exact format:
+The response MUST be a valid JSON object in exactly this format:
 {
     "lists": [
         {
@@ -200,7 +89,9 @@ Return ONLY a JSON object in this exact format:
             ]
         }
     ]
-}`;
+}
+
+Do not include any text before or after the JSON object. The response should begin with '{' and end with '}'.`;
     };
 
     interface ReorganizedItem {
@@ -214,61 +105,84 @@ Return ONLY a JSON object in this exact format:
         items: ReorganizedItem[];
     }
 
+    // Using Record for flexibility with different API response structures
     interface AIReorganizeResponse {
-        lists: ReorganizedList[];
+        lists?: ReorganizedList[];
+        // For single list response format:
+        title?: string;
+        items?: ReorganizedItem[];
     }
 
-    const parseAIResponse = (rawResponse: { output: unknown[]; }): ListData[] => {
-        const responseText = rawResponse.output.join('').trim();
-        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-
-        if (!jsonMatch) {
-            throw new Error('No valid JSON found in response');
+    /**
+     * Converts the AI's response to ListData[] format, performing necessary validations and transformations
+     */
+    const parseAIResponse = (parsedResponse: AIReorganizeResponse): ListData[] => {
+        console.log('Received AI response:', parsedResponse);
+        
+        // Normalize the response structure if needed
+        if (!parsedResponse.lists && parsedResponse.title && Array.isArray(parsedResponse.items)) {
+            console.log('Received single list instead of lists array, normalizing structure...');
+            // We got a single list instead of an array wrapped in "lists"
+            parsedResponse = {
+                lists: [{
+                    title: parsedResponse.title,
+                    items: parsedResponse.items
+                }]
+            };
+        } else if (!parsedResponse.lists || !Array.isArray(parsedResponse.lists)) {
+            console.error('Invalid response structure:', parsedResponse);
+            throw new Error('Invalid response structure: missing lists array');
         }
 
-        try {
-            const parsedResponse: AIReorganizeResponse = JSON.parse(jsonMatch[0]);
-
-            if (!parsedResponse.lists || !Array.isArray(parsedResponse.lists)) {
-                throw new Error('Invalid response structure');
-            }
-
-            // Create a map of existing items for reference
-            const existingItemsMap = new Map<string, Item>();
-            lists.forEach(list => {
-                list.items.forEach(item => {
-                    existingItemsMap.set(item.id, item);
-                });
+        // Create a map of existing items for reference (to maintain completion status, etc.)
+        const existingItemsMap = new Map<string, Item>();
+        lists.forEach(list => {
+            list.items.forEach(item => {
+                existingItemsMap.set(item.id, item);
             });
+        });
 
-            // Transform AI response into new lists while preserving existing items
-            return parsedResponse.lists.map(category => ({
-                id: `list-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                title: category.title.trim(),
-                items: category.items
-                    .map(item => {
-                        // Try to find existing item
-                        const existingItem = existingItemsMap.get(item.id);
-                        if (existingItem) {
-                            return {
-                                ...existingItem,
-                                value: item.value.trim() // Use AI's suggested value in case it was cleaned up
-                            };
-                        }
-                        // If item wasn't found (shouldn't happen), create new one
+        // Process each list in the response
+        return (parsedResponse.lists || []).map(category => ({
+            id: `list-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            title: category.title?.trim() || "Unnamed Category",
+            items: category.items
+                .map(item => {
+                    // Ensure required fields exist
+                    if (!item.id || !item.value) {
+                        console.warn('Item missing required fields:', item);
+                        return null;
+                    }
+                    
+                    // Try to find existing item to maintain state
+                    const existingItem = existingItemsMap.get(item.id);
+                    if (existingItem) {
                         return {
-                            id: item.id,
-                            value: item.value.trim(),
-                            completed: item.completed
+                            ...existingItem,
+                            value: item.value.trim() // Use AI's suggested value in case it was cleaned up
                         };
-                    })
-                    .filter(item => item.value) // Remove any empty items
-            }));
-        } catch (error) {
-            console.error('Error parsing AI response:', error);
-            throw new Error('Failed to parse AI response');
-        }
+                    }
+                    
+                    // If item wasn't found (shouldn't happen), create new one
+                    return {
+                        id: item.id,
+                        value: item.value.trim(),
+                        completed: !!item.completed
+                    };
+                })
+                .filter((item): item is Item => item !== null) // Type-safe filter for non-null items
+                .filter(item => item.value.trim() !== '') // Remove any empty items
+        }));
     };
+
+    // Setup the AI API hook with the correct type
+    const regroupApi = useOpenRouterAPI<AIReorganizeResponse>({
+        prompt: preparePromptFromLists(),
+        systemPrompt: "You are an assistant that reorganizes lists and always responds in valid JSON format matching the user's requested structure.",
+        responseFormat: 'json_object',
+        maxTokens: 1000,
+        temperature: 0.7
+    });
 
     const regroupListsWithAI = async () => {
         if (lists.length === 0) return;
@@ -281,35 +195,15 @@ Return ONLY a JSON object in this exact format:
                 throw new Error('No items to regroup. Please add some items first.');
             }
 
-            const data = {
-                modelURL: "https://api.replicate.com/v1/models/meta/meta-llama-3-70b-instruct/predictions",
-                input: {
-                    prompt: preparePromptFromLists(),
-                    max_tokens: 1000,
-                    temperature: 0.7,
-                    top_p: 0.9,
-                },
-            };
-
-            const response = await fetch(PROXY_URL, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: 'application/json',
-                },
-                body: JSON.stringify(data),
-            });
-
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
+            // Execute the API call using our custom hook
+            // Execute the API call
+            const result = await regroupApi.execute();
+            
+            if (!result) {
+                throw new Error('Failed to get response from AI service');
             }
 
-            const result = await response.json();
-
-            if (result.error) {
-                throw new Error(result.error);
-            }
-
+            // The response is already parsed as AIReorganizeResponse from our improved hook
             const newLists = parseAIResponse(result);
 
             console.log('New lists:', newLists);
@@ -320,8 +214,11 @@ Return ONLY a JSON object in this exact format:
                 throw new Error('Some items were lost during regrouping. Operation cancelled.');
             }
 
+            // Replace lists with the new lists from the AI
             if (newLists.length > 0) {
-                updateListsWithStorage(newLists);
+                // Use the context function to replace all lists at once
+                replaceLists(newLists);
+                showToast('Lists regrouped successfully!', 'success');
             } else {
                 throw new Error('No valid lists returned from AI');
             }
@@ -329,9 +226,9 @@ Return ONLY a JSON object in this exact format:
         } catch (error: unknown) {
             console.error('AI regrouping error:', error);
             if (error instanceof Error) {
-                alert(`Failed to regroup lists: ${error.message}`);
+                showToast(`Failed to regroup lists: ${error.message}`, 'error');
             } else {
-                alert('Failed to regroup lists: An unknown error occurred');
+                showToast('Failed to regroup lists: An unknown error occurred', 'error');
             }
         } finally {
             setIsRegrouping(false);
