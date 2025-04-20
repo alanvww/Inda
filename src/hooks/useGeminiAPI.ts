@@ -4,8 +4,8 @@ import { useToast } from '../context/ToastContext';
 // Environment variables
 // Read the Gemini model name from environment variables
 const GEMINI_MODEL = import.meta.env.VITE_GEMINI_MODEL || "gemini-1.5-flash-latest"; // Provide a default
-// URL to our local API route handled by vite-plugin-node
-const PROXY_URL = '/api/gemini'; // Updated path
+// URL for the backend API. Uses VITE_API_BASE_URL if set, otherwise defaults to the local proxy path.
+const API_URL = import.meta.env.VITE_API_BASE_URL || '/api/gemini';
 
 // Interface for request options specific to the Gemini hook
 interface GeminiRequestOptions {
@@ -165,7 +165,7 @@ export function useGeminiAPI<T>(options: GeminiRequestOptions): AIResponse<T> {
         responseFormat: options.responseFormat || 'text', // Default to text
       };
 
-      const response = await fetch(PROXY_URL, {
+      const response = await fetch(API_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -82,8 +82,8 @@ export default defineConfig({
 		proxy: {
 			// Proxy requests starting with '/api'
 			'/api': {
-				// Target the standalone Bun server (running on port 3001 by default)
-				target: 'http://localhost:3001',
+				// Target the standalone Bun server. Use LOCAL_BACKEND_URL env var if set, otherwise default.
+				target: process.env.LOCAL_BACKEND_URL || 'http://localhost:3001',
 				// Change origin header to match the target URL
 				changeOrigin: true,
 				// Remove the '/api' prefix when forwarding the request
