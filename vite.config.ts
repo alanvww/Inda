@@ -91,5 +91,6 @@ export default defineConfig({
 				rewrite: (path) => path.replace(/^\/api/, ''),
 			},
 		},
+		allowedHosts: ['inda-production.up.railway.app', 'localhost','inda.alan.ooo'],
 	},
 });
