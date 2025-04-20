@@ -1,7 +1,7 @@
 import { useState, KeyboardEvent, useRef } from 'react';
 import { Reorder } from 'motion/react';
 import ListItem from './ListItem';
-import { useOpenRouterAPI } from '../hooks/useOpenRouterAPI';
+import { useGeminiAPI } from '../hooks/useGeminiAPI'; // Updated import
 import { useToast } from '../context/ToastContext';
 import { useScreenshot } from '../hooks/useScreenshot';
 
@@ -61,12 +61,12 @@ The items should be:
     // Define types for possible API responses
     type ItemResponse = string[] | { items: string[] } | Record<string, unknown>;
 
-    const itemsApi = useOpenRouterAPI<ItemResponse>({
+    const itemsApi = useGeminiAPI<ItemResponse>({ // Updated hook usage
         prompt: preparePrompt(list.title),
-        systemPrompt: "You are an assistant that creates focused todo lists and always responds in valid JSON format.",
-        responseFormat: 'json_object',
-        maxTokens: 500,
-        temperature: 0.7
+        systemPrompt: "You are an assistant that creates focused todo lists and always responds in valid JSON format.", // Keep system prompt
+        responseFormat: 'json', // Expecting JSON output (matches hook/proxy)
+        maxTokens: 500, // Keep maxTokens
+        temperature: 0.7 // Keep temperature
     });
 
     const generateItems = async () => {
@@ -97,19 +97,22 @@ The items should be:
                         if (Array.isArray(extractedItems)) {
                             items = extractedItems.map(item => typeof item === 'string' ? item : String(item));
                         } else {
-                            throw new Error('Extracted content is not an array');
+                            throw new Error('AI response text property contained JSON, but it was not an array.');
                         }
-                    } catch {
+                    } catch (parseError) {
                         // If parsing fails, just use the text as a single item
+                        console.warn('AI response text property could not be parsed as JSON array, using raw text as item:', result.text, parseError);
                         items = [String(result.text)];
                     }
                 } else {
                     // Fallback: try to stringify the whole object and use that
+                    console.warn('Unexpected AI response object format (no "items" or "text" property found), using stringified object as item:', result);
                     items = [JSON.stringify(result)];
-                    console.warn('Unexpected response format, using stringified result', result);
                 }
             } else {
-                throw new Error('Unexpected response format: could not extract items array');
+                // This case handles non-array, non-object responses (e.g., string, number, null)
+                console.error('Unexpected AI response format: Expected an array or object, but received:', typeof result, result);
+                throw new Error(`Unexpected AI response format: Expected an array or object, received ${typeof result}.`);
             }
 
             // Filter out any empty or invalid items
@@ -240,14 +243,25 @@ The items should be:
                 )}
                 <div
                     data-buttons-container
-                    className="flex gap-2"
+                    className="flex gap-2 items-center" // Added items-center
                 >
+                    {/* Add Item Button */}
                     <button
                         onClick={() => addItem(listIndex)}
                         className="mb-2 bg-stone-900 text-white px-2 py-1"
                     >
                         +
                     </button>
+                    {/* Generate Items Button */}
+                    <button
+                        onClick={generateItems}
+                        disabled={isGenerating}
+                        className={`bg-blue-600 text-white mb-2 px-2 py-1 flex items-center justify-center ${isGenerating ? 'opacity-50 cursor-wait animate-pulse' : 'hover:bg-blue-700'}`} // Adjusted styles
+                        title={isGenerating ? 'Generating...' : 'Generate items using AI'}
+                    >
+                        {isGenerating ? '...' : '🤖'}
+                    </button>
+                    {/* Screenshot Button */}
                     <button
                         onClick={handleScreenshot}
                         className="mb-2 bg-stone-900 text-white px-2 py-1"
@@ -258,42 +272,35 @@ The items should be:
                 </div>
             </div>
 
+            {/* Item List Area */}
             <div
                 data-reorder-group
                 className="overflow-y-scroll w-full flex-grow"
             >
-                {list.items.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <button
-                            onClick={generateItems}
-                            disabled={isGenerating}
-                            className={`text-4xl transition-transform hover:scale-110 ${isGenerating ? 'animate-pulse cursor-wait' : 'hover:animate-bounce'
-                                }`}
-                            title="Generate items using AI"
-                        >
-                            🤖
-                        </button>
-                        <p className="mt-2 text-sm">
-                            {isGenerating ? 'Thinking...' : 'Generate items'}
-                        </p>
+                {/* Always render Reorder.Group, it handles empty state internally */}
+                <Reorder.Group
+                    axis="y"
+                    values={sortedItems} // Use sortedItems which handles completion status
+                    onReorder={(newOrder) => reorderItems(listIndex, newOrder)}
+                    className="w-full"
+                >
+                    {/* Map over sorted items */}
+                    {sortedItems.map((item) => (
+                        <ListItem
+                            key={item.id}
+                            item={item}
+                            onUpdate={(itemId, newValue) => updateItem(listIndex, itemId, newValue)}
+                            onDelete={(itemId) => deleteItem(listIndex, itemId)}
+                            onToggleComplete={(itemId) => toggleComplete(listIndex, itemId)}
+                        />
+                    ))}
+                </Reorder.Group>
+
+                {/* Optional: Display a message if the list is empty and not generating */}
+                {list.items.length === 0 && !isGenerating && (
+                     <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+                        List is empty. Add items manually (+) or generate (🤖).
                     </div>
-                ) : (
-                    <Reorder.Group
-                        axis="y"
-                        values={sortedItems}
-                        onReorder={(newOrder) => reorderItems(listIndex, newOrder)}
-                        className="w-full"
-                    >
-                        {sortedItems.map((item) => (
-                            <ListItem
-                                key={item.id}
-                                item={item}
-                                onUpdate={(itemId, newValue) => updateItem(listIndex, itemId, newValue)}
-                                onDelete={(itemId) => deleteItem(listIndex, itemId)}
-                                onToggleComplete={(itemId) => toggleComplete(listIndex, itemId)}
-                            />
-                        ))}
-                    </Reorder.Group>
                 )}
             </div>
         </div>

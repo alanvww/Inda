@@ -2,39 +2,42 @@ import { useState, useEffect } from 'react';
 import { useToast } from '../context/ToastContext';
 
 // Environment variables
-// Only using the model name from environment, API calls go through our proxy
-const OPENROUTER_MODEL = import.meta.env.VITE_OPENROUTER_MODEL_PLACEHOLDER;
-// URL to our serverless function
-const PROXY_URL = '/.netlify/functions/openrouter-proxy';
+// Read the Gemini model name from environment variables
+const GEMINI_MODEL = import.meta.env.VITE_GEMINI_MODEL || "gemini-1.5-flash-latest"; // Provide a default
+// URL to our local API route handled by vite-plugin-node
+const PROXY_URL = '/api/gemini'; // Updated path
 
-interface OpenRouterRequestOptions {
+// Interface for request options specific to the Gemini hook
+interface GeminiRequestOptions {
   prompt: string;
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
-  responseFormat?: 'json_object' | 'text';
+  responseFormat?: 'json' | 'text'; // Matches proxy expectation
 }
 
+// Reusable interface for the hook's return value
 export interface AIResponse<T> {
   data: T | null;
   isLoading: boolean;
   error: Error | null;
   execute: () => Promise<T | null>;
-  rawResponse?: Record<string, unknown> | null; // For debugging or advanced use cases
+  // rawResponse could potentially hold the raw text from proxy if needed later
+  // rawResponse?: string | null; 
 }
 
 /**
- * Custom hook for making OpenRouter API requests.
+ * Custom hook for making Google Gemini API requests via a Netlify proxy.
  * Centralizes API calling logic and provides loading/error states.
  */
-export function useOpenRouterAPI<T>(options: OpenRouterRequestOptions): AIResponse<T> {
+export function useGeminiAPI<T>(options: GeminiRequestOptions): AIResponse<T> {
   const [data, setData] = useState<T | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const { showToast } = useToast();
   
-  // Monitor online/offline status
+  // Monitor online/offline status (remains the same)
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
@@ -55,7 +58,8 @@ export function useOpenRouterAPI<T>(options: OpenRouterRequestOptions): AIRespon
     };
   }, [showToast]);
 
-  // Function to sanitize and fix common JSON issues in API responses
+  // Function to sanitize and fix common JSON issues (remains the same)
+  // Useful when responseFormat is 'json' and the LLM doesn't perfectly format it
   const sanitizeJsonString = (jsonStr: string): string => {
     // Remove any markdown code block markers
     let cleaned = jsonStr.replace(/```json|```/g, '');
@@ -98,7 +102,7 @@ export function useOpenRouterAPI<T>(options: OpenRouterRequestOptions): AIRespon
   };
 
   /**
-   * Advanced JSON parsing with multiple fallback strategies
+   * Advanced JSON parsing with multiple fallback strategies (remains the same)
    * @param jsonStr String that may contain JSON
    * @returns Parsed JSON object or throws an error
    */
@@ -136,30 +140,13 @@ export function useOpenRouterAPI<T>(options: OpenRouterRequestOptions): AIRespon
     }
   };
 
-  // Extract text content from API response
-  const extractTextContent = (response: Record<string, unknown>): string => {
-    // Handle different API response formats
-    if (response.output && Array.isArray(response.output)) {
-      // Old format (Replicate API)
-      return response.output.join('').trim();
-    } else if (
-      response.choices && 
-      Array.isArray(response.choices) && 
-      response.choices[0]?.message?.content
-    ) {
-      // New format (OpenRouter API)
-      return response.choices[0].message.content as string;
-    } else {
-      console.error('Unexpected response format:', response);
-      throw new Error('Unrecognized API response format');
-    }
-  };
+  // Removed extractTextContent function as proxy returns { text: "..." }
 
   const execute = async (): Promise<T | null> => {
     setIsLoading(true);
     setError(null);
     
-    // Check if we're offline
+    // Check if we're offline (remains the same)
     if (!isOnline) {
       setIsLoading(false);
       setError(new Error('You are currently offline. This feature requires an internet connection.'));
@@ -168,52 +155,54 @@ export function useOpenRouterAPI<T>(options: OpenRouterRequestOptions): AIRespon
     }
     
     try {
-      const data = {
-        model: OPENROUTER_MODEL,
-        messages: [
-          {
-            role: "system",
-            content: options.systemPrompt || "You are a helpful assistant that responds in the format requested."
-          },
-          {
-            role: "user",
-            content: options.prompt
-          }
-        ],
-        response_format: options.responseFormat ? { type: options.responseFormat } : undefined,
-        max_tokens: options.maxTokens || 1000,
-        temperature: options.temperature !== undefined ? options.temperature : 0.7
+      // Construct payload for the gemini-proxy function
+      const payload = {
+        modelName: GEMINI_MODEL,
+        prompt: options.prompt,
+        systemPrompt: options.systemPrompt,
+        temperature: options.temperature, // Pass through if provided
+        maxTokens: options.maxTokens,     // Pass through if provided
+        responseFormat: options.responseFormat || 'text', // Default to text
       };
 
       const response = await fetch(PROXY_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "HTTP-Referer": window.location.origin,
-          "X-Title": "List Organizer App",
+          // Referer and X-Title might still be useful for proxy/API logs
+          "HTTP-Referer": window.location.origin, 
+          "X-Title": "List Organizer App", // Or a more generic title
           "Accept": 'application/json',
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
+        // Try to parse error from proxy response body
+        const errorData = await response.json().catch(() => ({ error: `HTTP error ${response.status}` }));
         throw new Error(errorData.error || `HTTP error ${response.status}`);
       }
 
+      // Proxy should return { text: "..." }
       const result = await response.json();
       
       if (result.error) {
+        // Handle errors returned explicitly by the proxy function
         throw new Error(result.error);
       }
 
-      // Extract the content from the API response
-      const textContent = extractTextContent(result);
+      // Extract the text content from the proxy's response
+      const textContent = result.text;
+
+      if (typeof textContent !== 'string') {
+          console.error('Proxy response did not contain a text field:', result);
+          throw new Error('Invalid response format received from proxy.');
+      }
       
       let parsedResult: T;
       
-      // If expecting JSON, try to parse the content
-      if (options.responseFormat === 'json_object') {
+      // If expecting JSON, try to parse the text content
+      if (options.responseFormat === 'json') {
         try {
           // Use our robust JSON parsing with multiple fallback strategies
           parsedResult = robustJsonParse<T>(textContent);
@@ -222,10 +211,12 @@ export function useOpenRouterAPI<T>(options: OpenRouterRequestOptions): AIRespon
           console.log('Successfully parsed JSON response:', parsedResult);
         } catch (parseError) {
           console.error('JSON parsing error:', parseError);
-          throw new Error('Failed to parse API response as JSON');
+          // Include the problematic text in the error for easier debugging
+          const errorMsg = parseError instanceof Error ? parseError.message : 'Unknown parsing error';
+          throw new Error(`Failed to parse API response as JSON: ${errorMsg}. Raw text: "${textContent.substring(0, 100)}..."`);
         }
       } else {
-        // For text responses, just return the text content
+        // For text responses, just return the text content (cast needed)
         parsedResult = textContent as unknown as T;
       }
       
@@ -234,6 +225,8 @@ export function useOpenRouterAPI<T>(options: OpenRouterRequestOptions): AIRespon
     } catch (error) {
       const finalError = error instanceof Error ? error : new Error('An unknown error occurred');
       setError(finalError);
+      // Optionally show toast for API errors
+      showToast(`API Error: ${finalError.message}`, 'error'); 
       return null;
     } finally {
       setIsLoading(false);

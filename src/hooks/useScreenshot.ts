@@ -54,7 +54,8 @@ export function useScreenshot() {
     }
 
     try {
-      const canvas = await html2canvas(elementRef.current, {
+      // 1. Capture the original element
+      const originalCanvas = await html2canvas(elementRef.current, {
         scale,
         backgroundColor,
         scrollY: -window.scrollY,
@@ -69,10 +70,45 @@ export function useScreenshot() {
         logging: false,
       });
 
-      // Convert canvas to blob and trigger download
+      // 2. Prepare watermark details
+      const watermarkText = '0.0 inda.alan.ooo';
+      const fontSize = 16; // pixels - Increased size
+      const verticalPadding = 8; // pixels top/bottom inside watermark area - Increased padding
+      const watermarkHeight = fontSize + (verticalPadding * 2);
+
+      // 3. Create the final canvas (taller)
+      const finalCanvas = document.createElement('canvas');
+      finalCanvas.width = originalCanvas.width;
+      finalCanvas.height = originalCanvas.height + watermarkHeight;
+      const finalCtx = finalCanvas.getContext('2d');
+
+      if (!finalCtx) {
+        console.error('Could not get 2D context for final canvas.');
+        return false;
+      }
+
+      // 4. Draw original content onto final canvas
+      // Ensure the original canvas background is drawn if it's transparent
+      finalCtx.fillStyle = backgroundColor || '#ffffff';
+      finalCtx.fillRect(0, 0, finalCanvas.width, finalCanvas.height); // Fill background first
+      finalCtx.drawImage(originalCanvas, 0, 0);
+
+      // 5. Draw watermark background (footer area)
+      finalCtx.fillStyle = '#000000'; // Black background
+      finalCtx.fillRect(0, originalCanvas.height, finalCanvas.width, watermarkHeight);
+
+      // 6. Draw watermark text
+      finalCtx.fillStyle = '#FFFFFF'; // White text
+      finalCtx.font = `${fontSize}px Arial`;
+      finalCtx.textAlign = 'center';
+      finalCtx.textBaseline = 'middle'; // Align vertically in the middle of the footer area
+      finalCtx.fillText(watermarkText, finalCanvas.width / 2, originalCanvas.height + watermarkHeight / 2);
+
+      // 7. Convert final canvas to blob and trigger download
       return new Promise<boolean>((resolve) => {
-        canvas.toBlob((blob) => {
+        finalCanvas.toBlob((blob) => {
           if (!blob) {
+            console.error('Failed to create blob from final canvas.');
             resolve(false);
             return;
           }

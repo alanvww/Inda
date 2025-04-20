@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import List from './List';
-import { useOpenRouterAPI } from '../hooks/useOpenRouterAPI';
+import { useGeminiAPI } from '../hooks/useGeminiAPI'; // Keep updated import
 import { useToast } from '../context/ToastContext';
 import { useLists, Item, ListData } from '../context/ListContext';
 
@@ -46,8 +46,10 @@ export default function ListView() {
     } = useLists();
     
     // Local state for regrouping operation
-    const [isRegrouping, setIsRegrouping] = useState(false);
-    
+    const [isRegrouping, setIsRegrouping] = useState(false); // Tracks AI API call
+    const [showRegroupPreview, setShowRegroupPreview] = useState(false); // Controls preview modal
+    const [suggestedRegrouping, setSuggestedRegrouping] = useState<ListData[] | null>(null); // Holds AI suggestion
+
     // Access toast context for notifications
     const { showToast } = useToast();
 
@@ -130,8 +132,8 @@ Do not include any text before or after the JSON object. The response should beg
                 }]
             };
         } else if (!parsedResponse.lists || !Array.isArray(parsedResponse.lists)) {
-            console.error('Invalid response structure:', parsedResponse);
-            throw new Error('Invalid response structure: missing lists array');
+            console.error('Invalid AI response structure after normalization:', parsedResponse);
+            throw new Error('AI response error: Expected a top-level "lists" array containing category objects, but received an invalid structure.');
         }
 
         // Create a map of existing items for reference (to maintain completion status, etc.)
@@ -175,18 +177,24 @@ Do not include any text before or after the JSON object. The response should beg
         }));
     };
 
-    // Setup the AI API hook with the correct type
-    const regroupApi = useOpenRouterAPI<AIReorganizeResponse>({
+    // Setup the AI API hook with the correct type using Gemini
+    const regroupApi = useGeminiAPI<AIReorganizeResponse>({ // Updated hook usage
         prompt: preparePromptFromLists(),
-        systemPrompt: "You are an assistant that reorganizes lists and always responds in valid JSON format matching the user's requested structure.",
-        responseFormat: 'json_object',
-        maxTokens: 1000,
-        temperature: 0.7
+        systemPrompt: "You are an expert organizer. Reorganize the provided lists based on their content and titles into logical groups. Return ONLY the JSON structure specified.", // Adjusted system prompt slightly for clarity
+        responseFormat: 'json', // Expecting JSON output (matches hook/proxy)
+        temperature: 0.5, // Lower temperature for more deterministic grouping (Restored from previous plan)
+        maxTokens: 1000, // Keep maxTokens
     });
 
     const regroupListsWithAI = async () => {
-        if (lists.length === 0) return;
-        setIsRegrouping(true);
+        if (lists.length === 0) {
+            showToast('Add some lists before regrouping.', 'info');
+            return;
+        }
+        // Reset previous suggestions if any
+        setSuggestedRegrouping(null);
+        setShowRegroupPreview(false);
+        setIsRegrouping(true); // Start loading indicator for API call
 
         try {
             // Validate that we have items to regroup
@@ -214,14 +222,18 @@ Do not include any text before or after the JSON object. The response should beg
                 throw new Error('Some items were lost during regrouping. Operation cancelled.');
             }
 
-            // Replace lists with the new lists from the AI
+            // Store suggestion and show preview instead of direct replacement
             if (newLists.length > 0) {
-                // Use the context function to replace all lists at once
-                replaceLists(newLists);
-                showToast('Lists regrouped successfully!', 'success');
+                setSuggestedRegrouping(newLists);
+                setShowRegroupPreview(true);
+                // Stop the main loading indicator, preview has its own UI
+                setIsRegrouping(false);
             } else {
-                throw new Error('No valid lists returned from AI');
+                // Handle case where AI returns empty/invalid structure
+                setIsRegrouping(false); // Stop loading
+                throw new Error('AI did not return a valid regrouping structure.');
             }
+            // Note: replaceLists is now called in handleConfirmRegroup
 
         } catch (error: unknown) {
             console.error('AI regrouping error:', error);
@@ -230,16 +242,40 @@ Do not include any text before or after the JSON object. The response should beg
             } else {
                 showToast('Failed to regroup lists: An unknown error occurred', 'error');
             }
-        } finally {
+            // Ensure loading stops on error
             setIsRegrouping(false);
+            setSuggestedRegrouping(null);
+            setShowRegroupPreview(false);
         }
+        // No finally block needed for setIsRegrouping(false) anymore
+    };
+
+    // Handle confirming the AI's suggestion
+    const handleConfirmRegroup = () => {
+        if (suggestedRegrouping) {
+            replaceLists(suggestedRegrouping); // Apply the changes
+            showToast('Lists regrouped successfully!', 'success');
+        } else {
+            showToast('Error applying regrouping: No suggestion found.', 'error');
+        }
+        // Reset state
+        setSuggestedRegrouping(null);
+        setShowRegroupPreview(false);
+    };
+
+    // Handle cancelling the preview
+    const handleCancelRegroup = () => {
+        setSuggestedRegrouping(null);
+        setShowRegroupPreview(false);
+        showToast('Regrouping cancelled.', 'info');
     };
 
     return (
-        <div className="mx-4 mb-4 px-4 flex-grow">
+        <div className="mx-4 mb-4 px-4 flex-grow relative"> {/* Added relative positioning */}
+            {/* Loading overlay ONLY for AI call */}
             {isRegrouping && (
                 <div
-                    className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
+                    className="absolute inset-0 bg-black/50 backdrop-blur-sm z-40 flex items-center justify-center" // Lower z-index than preview
                     onMouseDown={(e) => e.preventDefault()}
                 >
                     <div className="bg-white p-6 shadow-lg text-center">
@@ -251,6 +287,39 @@ Do not include any text before or after the JSON object. The response should beg
                     </div>
                 </div>
             )}
+
+            {/* Preview Modal */}
+            {showRegroupPreview && suggestedRegrouping && (
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+                    <div className="bg-white p-6 rounded-lg shadow-xl max-w-lg w-full">
+                        <h3 className="text-xl font-semibold mb-4 text-gray-800">Regrouping Preview</h3>
+                        <p className="mb-4 text-gray-600">The AI suggests organizing your items into these categories:</p>
+                        <ul className="list-disc list-inside mb-6 space-y-1 text-gray-700 max-h-60 overflow-y-auto">
+                            {suggestedRegrouping.map((list) => (
+                                <li key={list.id}>
+                                    <strong>{list.title}</strong> ({list.items.length} items)
+                                </li>
+                            ))}
+                        </ul>
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={handleCancelRegroup}
+                                className="px-4 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmRegroup}
+                                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                            >
+                                Confirm Regrouping
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Main Controls */}
             <div className="flex justify-between items-center mb-4">
                 <div className="flex gap-4">
                     <button
@@ -261,9 +330,9 @@ Do not include any text before or after the JSON object. The response should beg
                     </button>
                     <button
                         onClick={regroupListsWithAI}
-                        disabled={isRegrouping || lists.length === 0}
-                        className={`bg-blue-600 text-white px-4 py-2 ${(isRegrouping || lists.length === 0) ? 'opacity-50 cursor-not-allowed' : ''
-                            }`}
+                        // Disable button if AI call is in progress OR preview is shown OR no lists exist
+                        disabled={isRegrouping || showRegroupPreview || lists.length === 0}
+                        className={`bg-blue-600 text-white px-4 py-2 ${(isRegrouping || showRegroupPreview || lists.length === 0) ? 'opacity-50 cursor-not-allowed' : ''}`} // Fixed closing backtick placement
                     >
                         {isRegrouping ? 'Regrouping...' : '🤖 Regroup'}
                     </button>

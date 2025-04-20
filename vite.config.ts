@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+// Removed VitePluginNode import
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -66,5 +67,29 @@ export default defineConfig({
 				navigateFallbackDenylist: [/^\/icons\//],
 			},
 		}),
+		// Removed VitePluginNode configuration
 	],
+	// Ensure environment variables from .env are loaded for the server-side API route
+	// Vite loads .env files by default, but explicitly defining might help clarity
+	// Note: VITE_ prefix is NOT needed for server-side env vars accessed via process.env
+	envPrefix: 'VITE_', // Keep this for client-side variables
+	// Optional: Define server-specific options if needed, like port
+	// server: {
+	//   port: 5174 // Your current port
+	// },
+	// Configure Vite's development server proxy
+	server: {
+		proxy: {
+			// Proxy requests starting with '/api'
+			'/api': {
+				// Target the standalone Bun server (running on port 3001 by default)
+				target: 'http://localhost:3001',
+				// Change origin header to match the target URL
+				changeOrigin: true,
+				// Remove the '/api' prefix when forwarding the request
+				// So, a request to '/api/gemini' becomes a request to '/' on the target Bun server
+				rewrite: (path) => path.replace(/^\/api/, ''),
+			},
+		},
+	},
 });

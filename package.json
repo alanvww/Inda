@@ -4,12 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "bun i && tsc -b && vite build",
+    "dev": "concurrently \"vite\" \"bun run dev:server\"",
+    "dev:server": "bun server/gemini.ts",
+    "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@google/genai": "^0.9.0",
     "@netlify/functions": "^3.0.4",
     "html2canvas": "^1.4.1",
     "motion": "^11.18.2",
@@ -18,10 +20,12 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.24.0",
+    "@types/bun": "^1.2.10",
     "@types/react": "^18.3.20",
     "@types/react-dom": "^18.3.6",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.21",
+    "concurrently": "^9.1.2",
     "eslint": "^9.24.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.19",
